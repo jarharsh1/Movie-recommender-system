@@ -1,59 +1,70 @@
-import pickle
+"""Streamlit web application for the Movie Recommender System."""
+
+import sys
+from pathlib import Path
+
 import streamlit as st
-import requests
 
+# Add src to path for module imports
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-def fetch_poster(movie_id):
-    url = "https://api.themoviedb.org/3/movie/{}?api_key=2dc5a9d04f25487af329e2c6f0186285&language=en-US".format(
-        movie_id)
-    data = requests.get(url)
-    data = data.json()
-    poster_path = data['poster_path']
-    full_path = "https://image.tmdb.org/t/p/w500/" + poster_path
-    return full_path
+from recommender.data_loader import DataLoader
+from recommender.engine import RecommendationEngine
+from recommender.poster_fetcher import PosterFetcher
 
-
-def recommend(movie):
-    index = movies[movies['title'] == movie].index[0]
-    distances = sorted(list(enumerate(similarity[index])), reverse=True, key=lambda x: x[1])
-    recommended_movie_names = []
-    recommended_movie_posters = []
-
-    for i in distances[1:6]:
-        # fetch the movie poster
-        movie_id = movies.iloc[i[0]].id
-        recommended_movie_posters.append(fetch_poster(movie_id))
-        recommended_movie_names.append(movies.iloc[i[0]].title)
-
-    return recommended_movie_names, recommended_movie_posters
-
-
-st.header('Movie Recommender System')
-movies = pickle.load(open('movies.pkl', 'rb'))
-similarity = pickle.load(open('vector_distance.pkl', 'rb'))
-
-movie_list = movies['title'].values
-selected_movie = st.selectbox(
-    "Type or select a movie from the dropdown",
-    movie_list
+# Page configuration
+st.set_page_config(
+    page_title="Movie Recommender System",
+    page_icon="🎬",
+    layout="wide",
 )
 
-if st.button('Show Recommendation'):
-    recommended_movie_names, recommended_movie_posters = recommend(selected_movie)
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.text(recommended_movie_names[0])
-        st.image(recommended_movie_posters[0])
-    with col2:
-        st.text(recommended_movie_names[1])
-        st.image(recommended_movie_posters[1])
 
-    with col3:
-        st.text(recommended_movie_names[2])
-        st.image(recommended_movie_posters[2])
-    with col4:
-        st.text(recommended_movie_names[3])
-        st.image(recommended_movie_posters[3])
-    with col5:
-        st.text(recommended_movie_names[4])
-        st.image(recommended_movie_posters[4])
+@st.cache_resource
+def load_engine():
+    """Load data and initialize the recommendation engine (cached)."""
+    loader = DataLoader()
+    movies = loader.load_movies()
+    similarity = loader.load_similarity_matrix()
+    fetcher = PosterFetcher()
+    return RecommendationEngine(movies, similarity, fetcher)
+
+
+def main():
+    st.header("Movie Recommender System")
+    st.markdown(
+        "Select a movie you enjoy, and we'll recommend 5 similar movies based on "
+        "genre, cast, crew, keywords, and plot similarity."
+    )
+
+    try:
+        engine = load_engine()
+    except FileNotFoundError as e:
+        st.error(str(e))
+        return
+
+    movie_list = engine.get_movie_titles()
+    selected_movie = st.selectbox(
+        "Type or select a movie from the dropdown",
+        movie_list,
+    )
+
+    if st.button("Show Recommendations"):
+        try:
+            with st.spinner("Finding similar movies..."):
+                recommendations = engine.get_recommendations(selected_movie)
+
+            cols = st.columns(5)
+            for col, (title, poster_url) in zip(cols, recommendations):
+                with col:
+                    st.text(title)
+                    st.image(poster_url, use_container_width=True)
+
+        except ValueError as e:
+            st.error(str(e))
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
+
+
+if __name__ == "__main__":
+    main()
